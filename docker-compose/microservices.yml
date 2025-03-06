@@ -1,57 +1,103 @@
 version: '3.9'
 
 services:
+  # Ana PostgreSQL veritabanı
+  postgres:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: blockscout
+      POSTGRES_PASSWORD: 123qwe123**-
+      POSTGRES_DB: blockscout
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U blockscout -d blockscout"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Blockscout Backend
+  backend:
+    build: .
+    environment:
+      MIX_ENV: prod
+      DATABASE_URL: postgresql://blockscout:123qwe123**-@postgres:5432/blockscout
+      SECRET_KEY_BASE: AaSrj4S/FDWjDPKS/cdOBMt7/reGI2cSDy12aN7CBAF5fZXmK503hU4R+bwaqFqw
+      ETHEREUM_JSONRPC_HTTP_URL: http://88.218.130.66:9545
+      PORT: 3001
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Mikroservisler
   visualizer:
-    extends:
-      file: ./services/visualizer.yml
-      service: visualizer
+    image: ghcr.io/blockscout/visualizer:latest
+    ports:
+      - "8081:8050"
+    environment:
+      RUST_LOG: info
 
   sig-provider:
-    extends:
-      file: ./services/sig-provider.yml
-      service: sig-provider
+    image: ghcr.io/blockscout/sig-provider:latest
     ports:
-      - 8083:8050
-    
+      - "8083:8050"
+    environment:
+      RUST_LOG: info
 
   sc-verifier:
-    extends:
-      file: ./services/smart-contract-verifier.yml
-      service: smart-contract-verifier
+    image: ghcr.io/blockscout/smart-contract-verifier:latest
     ports:
-      - 8082:8050
+      - "8082:8050"
+    environment:
+      RUST_LOG: info
 
-  stats-db-init:
-    extends:
-      file: ./services/stats.yml
-      service: stats-db-init
-
+  # İstatistikler için PostgreSQL
   stats-db:
-    depends_on:
-      stats-db-init:
-        condition: service_completed_successfully
-    extends:
-      file: ./services/stats.yml
-      service: stats-db
+    image: postgres:14
+    environment:
+      POSTGRES_USER: stats
+      POSTGRES_PASSWORD: stats
+      POSTGRES_DB: stats
+    volumes:
+      - stats-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stats -d stats"]
 
   stats:
+    image: ghcr.io/blockscout/stats:latest
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgresql://stats:stats@stats-db:5432/stats
+      BLOCKSCOUT_DATABASE_URL: postgresql://blockscout:123qwe123**-@postgres:5432/blockscout
     depends_on:
-      - stats-db
-    extends:
-      file: ./services/stats.yml
-      service: stats
+      stats-db:
+        condition: service_healthy
 
   user-ops-indexer:
-    extends:
-      file: ./services/user-ops-indexer.yml
-      service: user-ops-indexer
-
-  proxy:
+    image: ghcr.io/blockscout/user-ops-indexer:latest
+    environment:
+      DATABASE_URL: postgresql://blockscout:123qwe123**-@postgres:5432/blockscout
+      ETHEREUM_JSONRPC_HTTP_URL: http://88.218.130.66:9545
     depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Nginx Proxy
+  proxy:
+    image: nginx:latest
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./proxy/microservices.conf.template:/etc/nginx/templates/default.conf.template
+    depends_on:
+      - backend
       - visualizer
       - stats
-    extends:
-      file: ./services/nginx.yml
-      service: proxy
-    volumes:
-      - "./proxy/microservices.conf.template:/etc/nginx/templates/default.conf.template"
+
+volumes:
+  postgres-data:
+  stats-data:
